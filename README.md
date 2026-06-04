@@ -1,1 +1,1 @@
-# zohocommercedemo
+# zc-snippets
