@@ -1,0 +1,74 @@
+
+<style>
+    .zs-category-custom-text {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        font-weight: 500;
+        padding: 2px 9px;
+        border-radius: 3px;
+        border: 0.5px solid #5DCAA5;
+        background: #E1F5EE;
+        color: #085041;
+    }
+
+    .zs-category-custom-text::before {
+        content: '';
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #0F6E56;
+        flex-shrink: 0;
+    }
+
+    .theme-price-qty [data-zs-pricing-container] {
+        display: flex;
+        align-items: center;
+        column-gap: 20px;
+    }
+
+    @media screen and (max-width: 768px) {
+       .theme-price-qty [data-zs-pricing-container] {
+            display: block;
+            margin-top: 6px;
+        }
+    }
+</style>
+
+
+<script data-zs-snippet="They would also like to display custom text">
+    document.addEventListener("DOMContentLoaded", function () {
+
+        if (window.zs_view === "product") {
+
+            const categoryTextMap = {
+                "39742000000093330": "Free Shipping",
+                "39742000000093344": "Best Seller",
+                "39742000000093315": "Limited Stock"
+            };
+
+            const categoryID = zs_product.category_id;
+
+            if (categoryTextMap[categoryID]) {
+
+                const priceArea = document.querySelector("[data-zs-pricings]");
+                const oldPrice = priceArea?.querySelector(".theme-product-detail-price-area");
+                const customText = document.createElement("span");
+                customText.className = "zs-category-custom-text";
+                customText.innerText = categoryTextMap[categoryID];
+
+                if (oldPrice) {
+                    oldPrice.insertAdjacentElement("afterend", customText);
+
+                } else if (priceArea) {
+                    priceArea.insertAdjacentElement("afterend", customText);
+
+                }
+
+            }
+
+        }
+
+    });
+</script>
