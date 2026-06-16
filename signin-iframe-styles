@@ -1,0 +1,40 @@
+<script data-zs-snippet="sign in iframe styles">
+    function modifyIframeStyles() {
+        const signiniframe = document.querySelector(".signin-iframe");
+        if (!signiniframe) return;
+
+        const applyStyles = () => {
+            const iframeDocument = signiniframe.contentDocument || signiniframe.contentWindow?.document;
+            if (iframeDocument?.head) {
+                const style = document.createElement("style");
+                style.innerHTML = `
+                #headtitle { font-size: 30px; line-height: 32px; }
+                #nextbtn { font-size: 20px; }
+                .signin_head .service_name { font-size: 30px; }
+                .signin_head .service_name span { font-size: 30px; }
+                #login_id::placeholder { font-size: 16px; }
+                #login_id { font-size: 16px; }
+            `;
+                iframeDocument.head.appendChild(style);
+            }
+
+            signiniframe.style.removeProperty('height');
+            signiniframe.style.height = '236px';
+        };
+
+        applyStyles();
+        signiniframe.addEventListener("load", applyStyles);
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+        if (window.zs_view === "signin") {
+            modifyIframeStyles();
+        }
+    });
+</script>
+<style>
+    .theme-noaccount-signup span {
+        font-size: 19px !important;
+
+    }
+</style>
