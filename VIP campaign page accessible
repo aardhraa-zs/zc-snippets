@@ -1,0 +1,59 @@
+<script data-zs-snippet="VIP campaign page accessible only for the specific users">
+    document.addEventListener("DOMContentLoaded", function () {
+        const VIP_SLUG = "headphone"; // only change the menu name here
+
+
+        const VIP_PATH = `/categories/${VIP_SLUG}/`;
+        const VIP_MENU_SELECTOR = `li a[href*="${VIP_PATH}"]`;
+        const VIP_DESIGNATION = "VIP";
+        const HOME_PAGE = "/";
+
+        function applyMenuVisibility(designation) {
+            const menuItem = document.querySelector(VIP_MENU_SELECTOR)?.closest("li");
+            if (!menuItem) return;
+            menuItem.style.display = designation === VIP_DESIGNATION ? "block" : "none";
+        }
+
+        function applyPageGuard(designation) {
+            if (!window.location.pathname.includes(VIP_PATH)) return;
+            if (designation !== VIP_DESIGNATION) {
+                window.location.href = HOME_PAGE;
+            }
+        }
+
+        function init() {
+            const menuItem = document.querySelector(VIP_MENU_SELECTOR)?.closest("li");
+            if (menuItem) menuItem.style.display = "none";
+
+            $X.get({
+                url: "/portaluser/userProfile",
+                handler: function () {
+                    let res;
+                    try {
+                        res = JSON.parse(this.responseText);
+                    } catch (e) {
+                        if (window.location.pathname.includes(VIP_PATH)) {
+                            window.location.href = HOME_PAGE;
+                        }
+                        return;
+                    }
+
+                    const status = res?.status;
+                    const payload = res?.payload;
+                    if (!payload || status === "failure" || status === "error") {
+                        if (window.location.pathname.includes(VIP_PATH)) {
+                            window.location.href = HOME_PAGE;
+                        }
+                        return;
+                    }
+
+                    const designation = res?.payload?.contact_person_details?.designation || "";
+                    applyMenuVisibility(designation);
+                    applyPageGuard(designation);
+                },
+            });
+        }
+
+        init();
+    });
+</script>
