@@ -1,0 +1,31 @@
+
+<script data-zs-snippet="Enable tabs in mobile view">
+    document.addEventListener("DOMContentLoaded", function () {
+        function isMobile() {
+            return window.innerWidth <= 992;
+        }
+        function applyTabFix() {
+            const tabHeaders = document.querySelectorAll('[data-element-type="tabheader"]');
+            tabHeaders.forEach(function (tab) {
+                tab.addEventListener('click', function () {
+                    if (!isMobile()) return;
+                    if (!this.classList.contains('zptab-active')) {
+                        this.classList.add('zptab-active');
+                        const contentId = this.getAttribute('data-content-id');
+                        const content = document.querySelector('[data-element-id="' + contentId + '"]');
+                        if (content) content.classList.add('zptab-active-content');
+                    }
+                });
+            });
+        }
+        applyTabFix();
+        window.addEventListener("resize", function () {
+            applyTabFix();
+        });
+    });
+</script>
+<style>
+    .zptabelem-inner-container .zptabs-content-container [data-element-type="tabheader"] {
+        display: none !important;
+    }
+</style>
