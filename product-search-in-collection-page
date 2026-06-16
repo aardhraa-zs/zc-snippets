@@ -1,0 +1,102 @@
+
+<style>
+    #zs-collection-search-wrapper {
+        width: 27%;
+        margin-bottom: 14px;
+        position: relative;
+    }
+
+    #zs-collection-search {
+        width: 100%;
+        padding: 8px 12px 8px 36px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 14px;
+        outline: none;
+        box-sizing: border-box;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    #zs-collection-search:focus {
+        border-color: #333;
+        box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.08);
+    }
+
+    #zs-collection-search-icon {
+        position: absolute;
+        left: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        pointer-events: none;
+        color: #999;
+        display: flex;
+        align-items: center;
+    }
+
+    @media (max-width: 768px) {
+        #zs-collection-search {
+            width: 94% !important;
+        }
+    }
+</style>
+
+<script data-zs-snippet="search bar in the collection page">
+    (function () {
+        placeholder_name = "Search products...";
+
+        if (window.zs_view !== 'collection') return;
+
+        function injectSearchBox() {
+            const productGrid = document.querySelector('[data-sort-by-products-target]');
+            if (!productGrid || document.getElementById('zs-collection-search')) return;
+
+            const wrapper = document.createElement('div');
+            wrapper.id = 'zs-collection-search-wrapper';
+
+            const icon = document.createElement('span');
+            icon.id = 'zs-collection-search-icon';
+            icon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
+
+            const input = document.createElement('input');
+            input.id = 'zs-collection-search';
+            input.type = 'text';
+            input.placeholder = placeholder_name;
+
+            input.addEventListener('input', function () {
+                const query = this.value.trim().toLowerCase();
+                const cards = document.querySelectorAll('.theme-prod-box');
+
+                cards.forEach(card => {
+                    // product_id card-la irukka data attribute-la irunthu edukurom
+                    const productId = card.getAttribute('data-product-id')
+                        || card.querySelector('[data-product-id]')?.getAttribute('data-product-id');
+
+                    let name = '';
+
+                    if (productId && window.zs_collection?.products) {
+                        const product = window.zs_collection.products.find(
+                            p => p.product_id === productId
+                        );
+                        if (product) name = product.name.toLowerCase();
+                    }
+
+                    if (!name) {
+                        const nameEl = card.querySelector('[data-zs-product-name] a');
+                        name = (nameEl
+                            ? (nameEl.getAttribute('title') || nameEl.textContent)
+                            : '').trim().toLowerCase();
+                    }
+
+                    card.style.display = (!query || name.includes(query)) ? '' : 'none';
+                });
+            });
+
+            wrapper.appendChild(icon);
+            wrapper.appendChild(input);
+            productGrid.insertAdjacentElement('beforebegin', wrapper);
+        }
+
+        document.addEventListener('zs-event-get-products-list-success', injectSearchBox);
+        document.addEventListener('DOMContentLoaded', injectSearchBox);
+    })();
+</script>
