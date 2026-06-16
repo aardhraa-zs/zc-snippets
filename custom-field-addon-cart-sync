@@ -1,0 +1,484 @@
+<script data-zs-snippet="customise their product details page to collect customer">
+
+    const ADDON_CONFIG = {
+        addons: [
+            {
+                fieldLabel: "Text To Engrave",
+                variantId: "28725000000154201",
+            },
+            {
+                fieldLabel: "Font Choice",
+                variantId: "28725000000154130",
+            },
+            {
+                fieldLabel: "Alcohol Quotes",
+                variantId: "28725000000097969",
+            },
+            {
+                fieldLabel: "2nd Side Engrave + USD 6",
+                variantId: "28725000000154095",
+                cartSyncSkip: true,
+            },
+        ],
+
+        productPage: {
+            qtySelector: '[name="qty"]',
+            qtyDecreaseSelector: '[aria-label="Decrease Quantity"]',
+            qtyIncreaseSelector: '[aria-label="Increase Quantity"]'
+        }
+    };
+    const addonDefinitions = ADDON_CONFIG.addons;
+    const allAddonVariantIds = addonDefinitions.map(addon => addon.variantId);
+
+    let isAddonDeleteFlowActive = false;
+    const pendingDeleteAddonIds = new Set();
+    let isCartSyncInProgress = false;
+    let cartSyncDebounceTimer = null;
+    const removedMainProductLineItemIds = new Set();
+
+    function getAddonVariantIdByFieldLabel(fieldLabelText) {
+        return addonDefinitions.find(addon => fieldLabelText.startsWith(addon.fieldLabel))?.variantId || null;
+    }
+    function hideAddonCartRows() {
+        const addonVariantIds = new Set(
+            ADDON_CONFIG.addons.map(a => a.variantId)
+        );
+
+        document.querySelectorAll('[data-cart-item]').forEach(row => {
+            const productId = row.getAttribute('data-zs-product-id');
+            if (addonVariantIds.has(productId)) {
+                row.style.display = 'none';
+            }
+        });
+    }
+
+    function getCSRFHeaders() {
+        return (typeof zsUtils !== "undefined" && zsUtils.getCSRFHeader)
+            ? zsUtils.getCSRFHeader() : {};
+    }
+
+    function bulkAddAddonsToCart(variantPayloads, onSuccessCallback) {
+        if (!variantPayloads.length) return;
+        $X.post({
+            url: "/store-user/api/v1/cart/bulkAddProductToCart",
+            bodyJSON: { variants: variantPayloads },
+            headers: getCSRFHeaders(),
+            handler: function () {
+                let parsedResponse = {};
+                try { parsedResponse = JSON.parse(this.responseText); } catch (e) { }
+                const cartData = parsedResponse?.payload || parsedResponse?.cart_details;
+                if (cartData) refreshCartDOMFromResponse(cartData);
+                document.dispatchEvent(new CustomEvent("zp-event-update-to-cart-success", {
+                    detail: { cart: cartData, isInternalSync: true }
+                }));
+                if (typeof onSuccessCallback === "function") onSuccessCallback(cartData);
+            }
+        });
+    }
+
+    function bulkSyncAddonQuantities(variantsWithQuantityDiff, onSuccessCallback) {
+        if (!variantsWithQuantityDiff.length) return;
+        $X.post({
+            url: "/store-user/api/v1/cart/bulkAddProductToCart",
+            bodyJSON: { variants: variantsWithQuantityDiff },
+            headers: getCSRFHeaders(),
+            handler: function () {
+                let parsedResponse = {};
+                try { parsedResponse = JSON.parse(this.responseText); } catch (e) { }
+                const cartData = parsedResponse?.payload || parsedResponse?.cart_details;
+                if (cartData) refreshCartDOMFromResponse(cartData);
+                if (typeof onSuccessCallback === "function") onSuccessCallback(cartData);
+            }
+        });
+    }
+
+    function removeAddonFromCartByRow(addonCartRow, addonVariantId) {
+        return new Promise(function (resolve) {
+            const addonRemoveButton = addonCartRow.querySelector('[data-zs-delete] .theme-cart-remove-button');
+            if (!addonRemoveButton) {
+                resolve();
+                return;
+            }
+            function onAddonDeleteSuccess(event) {
+                const deletedVariantId = event.detail?.variantId || event.detail?.variant_id;
+                if (deletedVariantId && deletedVariantId !== addonVariantId) return;
+                document.removeEventListener("zp-event-delete-from-cart-success", onAddonDeleteSuccess);
+                pendingDeleteAddonIds.delete(addonVariantId);
+                setTimeout(resolve, 100);
+            }
+
+            document.addEventListener("zp-event-delete-from-cart-success", onAddonDeleteSuccess);
+            addonRemoveButton.click();
+        });
+    }
+
+    function refreshCartDOMFromResponse(cartData) {
+        document.querySelectorAll("[data-zs-cart-subtotal]").forEach(el => el.innerText = cartData.sub_total_formatted);
+        document.querySelectorAll("[data-zs-cart-total]").forEach(el => {
+            el.innerText = cartData.grand_total_formatted || cartData.total_formatted || cartData.sub_total_formatted;
+        });
+        if (cartData.items?.length) {
+            cartData.items.forEach(cartItem => {
+                const itemVariantId = String(cartItem.variant_id);
+                if (!allAddonVariantIds.includes(itemVariantId)) return;
+                document.querySelectorAll(`[data-zs-cart-selling-price-${itemVariantId}]`).forEach(el => el.innerText = cartItem.selling_price_formatted);
+                document.querySelectorAll(`[data-zs-sub-total-item-${itemVariantId}]`).forEach(el => el.innerHTML = cartItem.approximate_total_formatted);
+                const addonRow = getAddonCartRowByVariantId(itemVariantId);
+                const addonQtyInput = getQuantityInputFromRow(addonRow);
+                if (addonQtyInput) {
+                    addonQtyInput.value = cartItem.quantity;
+                    addonQtyInput.setAttribute("data-zs-old_value", cartItem.quantity);
+                }
+            });
+        }
+    }
+
+    function getAddonCartRowByVariantId(variantId) {
+        return document.querySelector('[data-cart-item][data-zs-product-id="' + variantId + '"]') || null;
+    }
+
+    function getQuantityInputFromRow(cartRow) {
+        return cartRow?.querySelector('input[data-zs-quantity][data-zs-product-lineitem-id]') || null;
+    }
+
+    function getAttachedAddonIdsFromProductRow(productRow) {
+        const customFieldListItems = Array.from(productRow.querySelectorAll("ul li"));
+        return customFieldListItems
+            .map(listItem => {
+                const fieldLabel = listItem.innerText.split(":")[0].trim();
+                const fieldValueEl = listItem.querySelector("span");
+                const fieldValue = fieldValueEl ? fieldValueEl.innerText.trim() : "";
+                if (fieldValue === "false" || fieldValue === "") return null;
+                return getAddonVariantIdByFieldLabel(fieldLabel);
+            })
+            .filter(Boolean);
+    }
+
+    function getSyncableAddonIdsFromProductRow(productRow) {
+        return getAttachedAddonIdsFromProductRow(productRow).filter(
+            addonId => !addonDefinitions.find(a => a.variantId === addonId)?.cartSyncSkip
+        );
+    }
+
+    function getCustomFieldsForVariant(variantId) {
+        if (typeof zs_product === "undefined" || !zs_product?.variants?.length) return null;
+        const matchedVariant = zs_product.variants.find(v => String(v.variant_id) === String(variantId));
+        return matchedVariant?.custom_fields || null;
+    }
+
+    function getAddonFieldLabelsForVariant(variantId) {
+        const customFields = getCustomFieldsForVariant(variantId);
+        if (!customFields) return null;
+        return customFields.map(field => field.label);
+    }
+
+    function initProductPage() {
+        const productPageConfig = ADDON_CONFIG.productPage;
+        const mainQtyInput = document.querySelector(productPageConfig.qtySelector);
+        if (!mainQtyInput) return;
+
+        const selectedAddonValues = {};
+        addonDefinitions.forEach(addon => { selectedAddonValues[addon.variantId] = null; });
+
+        let selectedQuantity = parseInt(mainQtyInput.value) || 1;
+        let selectedVariantId = null;
+
+        function syncQuantityFromInput() { selectedQuantity = parseInt(mainQtyInput.value) || 1; }
+        mainQtyInput.addEventListener("input", syncQuantityFromInput);
+        document.querySelectorAll(productPageConfig.qtyDecreaseSelector + ", " + productPageConfig.qtyIncreaseSelector)
+            .forEach(btn => btn.addEventListener("click", () => setTimeout(syncQuantityFromInput, 50)));
+
+        function attachAddonFieldListeners(variantId) {
+            const allowedFieldLabels = getAddonFieldLabelsForVariant(variantId);
+
+            addonDefinitions.forEach(function (addon) {
+                if (allowedFieldLabels !== null && !allowedFieldLabels.includes(addon.fieldLabel)) {
+                    selectedAddonValues[addon.variantId] = null;
+                    return;
+                }
+
+                const variantRows = document.querySelectorAll(`.theme-product-varients-row[data-variant-id="${variantId}"]`);
+                let addonFieldElement = null;
+                variantRows.forEach(function (row) {
+                    const found = row.querySelector(`[data-label="${addon.fieldLabel}"]`);
+                    if (found) addonFieldElement = found;
+                });
+                if (!addonFieldElement) return;
+
+                const freshFieldElement = addonFieldElement.cloneNode(true);
+                addonFieldElement.parentNode.replaceChild(freshFieldElement, addonFieldElement);
+
+                if (freshFieldElement.type === "checkbox") {
+                    selectedAddonValues[addon.variantId] = freshFieldElement.checked ? true : null;
+
+                    freshFieldElement.addEventListener("change", function (e) {
+                        selectedAddonValues[addon.variantId] = e.target.checked ? true : null;
+                    });
+                } else if (freshFieldElement.type === "file") {
+                    freshFieldElement.addEventListener("change", function (e) {
+                        selectedAddonValues[addon.variantId] = e.target.files?.length ? e.target.files[0] : null;
+                    });
+                } else {
+                    const inputEventType = (freshFieldElement.tagName === "SELECT") ? "change" : "input";
+                    freshFieldElement.addEventListener(inputEventType, function (e) {
+                        selectedAddonValues[addon.variantId] = e.target.value?.trim() || null;
+                    });
+                }
+            });
+        }
+
+        if (zs_product?.variants?.length === 1) {
+            const singleVariantId = String(zs_product.variants[0].variant_id);
+            selectedVariantId = singleVariantId;
+            attachAddonFieldListeners(singleVariantId);
+        }
+
+        document.addEventListener("zp-event-selected-variant", function (e) {
+            const newVariantId = e?.detail?.variant_id;
+            if (!newVariantId) return;
+            selectedVariantId = String(newVariantId);
+            addonDefinitions.forEach(addon => { selectedAddonValues[addon.variantId] = null; });
+            attachAddonFieldListeners(selectedVariantId);
+        });
+
+        document.addEventListener("zp-event-add-to-cart-success", function () {
+            const addonsToAddToCart = [];
+            const currentVariantFieldLabels = selectedVariantId ? getAddonFieldLabelsForVariant(selectedVariantId) : null;
+
+            addonDefinitions.forEach(function (addon) {
+                if (currentVariantFieldLabels !== null && !currentVariantFieldLabels.includes(addon.fieldLabel)) return;
+
+                const addonValue = selectedAddonValues[addon.variantId];
+                if (addonValue !== null && addonValue !== false && addonValue !== "") {
+                    addonsToAddToCart.push({ variant_id: addon.variantId, quantity: selectedQuantity });
+                }
+            });
+            bulkAddAddonsToCart(addonsToAddToCart);
+        });
+    }
+
+    function syncCartAddonQuantities() {
+        if (isCartSyncInProgress || isAddonDeleteFlowActive) return;
+
+        const allCartRows = document.querySelectorAll("[data-cart-item]");
+        if (!allCartRows.length) return;
+
+        const addonTargetQuantityMap = {};
+
+        allCartRows.forEach(function (cartRow) {
+            const rowVariantId = cartRow.getAttribute("data-zs-product-id");
+            if (allAddonVariantIds.includes(rowVariantId)) return;
+
+            const rowLineItemId = cartRow.getAttribute("data-zs-product-lineitem-id")
+                || getQuantityInputFromRow(cartRow)?.getAttribute("data-zs-product-lineitem-id");
+            if (rowLineItemId && removedMainProductLineItemIds.has(rowLineItemId)) {
+                return;
+            }
+
+            const mainProductQtyInput = getQuantityInputFromRow(cartRow);
+            if (!mainProductQtyInput) return;
+
+            const mainProductQty = parseInt(mainProductQtyInput.getAttribute("data-zs-old_value"))
+                || parseInt(mainProductQtyInput.value)
+                || 1;
+
+            const attachedAddonIds = getAttachedAddonIdsFromProductRow(cartRow);
+
+            attachedAddonIds.forEach(function (addonId) {
+                addonTargetQuantityMap[addonId] = (addonTargetQuantityMap[addonId] || 0) + mainProductQty;
+            });
+        });
+        const addonsToFreshAdd = [];
+        const addonsWithQuantityDiff = [];
+
+        Object.keys(addonTargetQuantityMap).forEach(function (addonId) {
+            const addonCartRow = getAddonCartRowByVariantId(addonId);
+
+            if (pendingDeleteAddonIds.has(addonId)) { return; }
+
+            const targetQty = addonTargetQuantityMap[addonId];
+
+            if (!addonCartRow) {
+                if (addonDefinitions.find(a => a.variantId === addonId)?.cartSyncSkip) { return; }
+                addonsToFreshAdd.push({ variant_id: addonId, quantity: targetQty });
+                return;
+            }
+
+            const addonQtyInput = getQuantityInputFromRow(addonCartRow);
+            const currentAddonQty = parseInt(addonQtyInput?.getAttribute("data-zs-old_value"))
+                || parseInt(addonQtyInput?.value)
+                || 0;
+
+            if (currentAddonQty === targetQty) return;
+
+            const quantityDiff = targetQty - currentAddonQty;
+            if (quantityDiff === 0) return;
+
+            addonsWithQuantityDiff.push({ variant_id: addonId, quantity: quantityDiff, addonQtyInput, targetQty });
+        });
+
+        if (!addonsToFreshAdd.length && !addonsWithQuantityDiff.length) return;
+
+        isCartSyncInProgress = true;
+        let totalSyncCalls = 0;
+        let completedSyncCalls = 0;
+
+        function onSyncCallComplete() {
+            completedSyncCalls++;
+            if (completedSyncCalls >= totalSyncCalls) {
+                isCartSyncInProgress = false;
+            }
+        }
+
+        if (addonsToFreshAdd.length) {
+            totalSyncCalls++;
+            bulkAddAddonsToCart(addonsToFreshAdd, onSyncCallComplete);
+        }
+
+        if (addonsWithQuantityDiff.length) {
+            totalSyncCalls++;
+            bulkSyncAddonQuantities(
+                addonsWithQuantityDiff.map(v => ({ variant_id: v.variant_id, quantity: v.quantity })),
+                function () {
+                    addonsWithQuantityDiff.forEach(v => {
+                        if (v.addonQtyInput) {
+                            v.addonQtyInput.value = v.targetQty;
+                            v.addonQtyInput.setAttribute("data-zs-old_value", v.targetQty);
+                        }
+                    });
+                    onSyncCallComplete();
+                }
+            );
+        }
+    }
+
+    function bindCartRemoveButtonHandlers() {
+        document.querySelectorAll('[data-zs-delete]').forEach(function (deleteSpan) {
+            if (deleteSpan.dataset.removeHandlerBound) return;
+            deleteSpan.dataset.removeHandlerBound = "true";
+
+            deleteSpan.addEventListener("click", function () {
+                const clickedVariantId = this.getAttribute("data-zs-product-variant-id");
+                const clickedLineItemId = this.getAttribute("data-zs-product-lineitem-id");
+
+                if (allAddonVariantIds.includes(clickedVariantId)) return;
+
+                if (clickedLineItemId) {
+                    removedMainProductLineItemIds.add(clickedLineItemId);
+                }
+
+                const productRow = document.querySelector(
+                    '[data-zs-product-wrapper-lineitem-id="' + clickedLineItemId + '"]');
+                if (!productRow) return;
+                const mainProductQtyInput = getQuantityInputFromRow(productRow);
+                const mainProductQty = parseInt(mainProductQtyInput?.getAttribute("data-zs-old_value"))
+                    || parseInt(mainProductQtyInput?.value)
+                    || 1;
+
+                const attachedAddonIds = getAttachedAddonIdsFromProductRow(productRow);
+
+                if (!attachedAddonIds.length) {
+                    removedMainProductLineItemIds.delete(clickedLineItemId);
+                    return;
+                }
+
+                isAddonDeleteFlowActive = true;
+                window._pendingAddonRemoval = { addonIds: attachedAddonIds, qty: mainProductQty };
+            });
+        });
+    }
+
+    function initCartPage() {
+        bindCartRemoveButtonHandlers();
+
+        document.addEventListener("zp-event-delete-from-cart-success", function () {
+            const pendingRemoval = window._pendingAddonRemoval;
+            if (!pendingRemoval?.addonIds.length) {
+                isAddonDeleteFlowActive = false;
+                return;
+            }
+            window._pendingAddonRemoval = null;
+
+            const addonsToDelete = [];
+            const addonsToReduce = [];
+
+            pendingRemoval.addonIds.forEach(function (addonId) {
+                const addonCartRow = getAddonCartRowByVariantId(addonId);
+                if (!addonCartRow) { return; }
+                const addonQtyInput = getQuantityInputFromRow(addonCartRow);
+                const currentAddonQty = parseInt(addonQtyInput?.getAttribute("data-zs-old_value"))
+                    || parseInt(addonQtyInput?.value)
+                    || 0;
+                const updatedAddonQty = currentAddonQty - pendingRemoval.qty;
+                if (updatedAddonQty <= 0) {
+                    pendingDeleteAddonIds.add(addonId);
+                    addonsToDelete.push({ addonId, addonCartRow });
+                } else {
+                    const quantityDiff = updatedAddonQty - currentAddonQty;
+                    addonsToReduce.push({ variant_id: addonId, quantity: quantityDiff, addonQtyInput, updatedAddonQty });
+                }
+            });
+            function onDeleteFlowComplete() {
+                clearTimeout(cartSyncDebounceTimer);
+                pendingDeleteAddonIds.clear();
+                isAddonDeleteFlowActive = false;
+            }
+
+            async function processAddonDeleteQueue(queueIndex) {
+                if (queueIndex >= addonsToDelete.length) {
+                    onDeleteFlowComplete();
+                    return;
+                }
+                const queueItem = addonsToDelete[queueIndex];
+                await removeAddonFromCartByRow(queueItem.addonCartRow, queueItem.addonId);
+                processAddonDeleteQueue(queueIndex + 1);
+            }
+
+            if (addonsToReduce.length) {
+                bulkSyncAddonQuantities(
+                    addonsToReduce.map(v => ({ variant_id: v.variant_id, quantity: v.quantity })),
+                    function () {
+                        addonsToReduce.forEach(v => {
+                            if (v.addonQtyInput) {
+                                v.addonQtyInput.value = v.updatedAddonQty;
+                                v.addonQtyInput.setAttribute("data-zs-old_value", v.updatedAddonQty);
+                            }
+                        });
+                        processAddonDeleteQueue(0);
+                    }
+                );
+            } else {
+                processAddonDeleteQueue(0);
+            }
+        });
+
+        function triggerDebouncedCartSync() {
+            clearTimeout(cartSyncDebounceTimer);
+            cartSyncDebounceTimer = setTimeout(function () {
+                syncCartAddonQuantities();
+            }, 300);
+        }
+
+        document.addEventListener("zp-event-cart-count", function () {
+            bindCartRemoveButtonHandlers();
+            triggerDebouncedCartSync();
+        });
+
+        document.addEventListener("zp-event-update-to-cart-success", function (e) {
+            if (e.detail?.isInternalSync) return;
+            triggerDebouncedCartSync();
+        });
+
+        document.addEventListener("zp-event-update-to-cart-failure", function () {
+            isCartSyncInProgress = false;
+            isAddonDeleteFlowActive = false;
+        });
+    }
+    document.addEventListener("DOMContentLoaded", function () {
+        if (zs_view === "product") { initProductPage(); }
+        if (zs_view === "cart") {
+            initCartPage();
+            hideAddonCartRows();
+        }
+    });
+</script>
