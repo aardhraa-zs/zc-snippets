@@ -1,0 +1,151 @@
+<script data-zs-snippet="Therefore Cx needs a Inquire Button which will be redirecting to their WhatsApp.">
+    const COLLECTION_PRODUCT_IDS_CACHE = "zs_collection_product_ids";
+    const CACHE_EXPIRY_MS = 30 * 60 * 1000;
+
+    const btnname = "Inquire Button";
+    const rederctlinkbtn = "https://www.w3schools.com/jsref/jsref_array_flatmap.asp";
+
+    document.addEventListener("DOMContentLoaded", function () {
+        const collectionId = "28725000000234046";
+
+        function saveProductIdsCache(ids) {
+            const data = { ids, timestamp: Date.now() };
+            localStorage.setItem(COLLECTION_PRODUCT_IDS_CACHE, JSON.stringify(data));
+        }
+
+        function getCachedIds() {
+            const cached = localStorage.getItem(COLLECTION_PRODUCT_IDS_CACHE);
+            if (!cached) return null;
+            const data = JSON.parse(cached);
+            if (Date.now() - data.timestamp > CACHE_EXPIRY_MS) {
+                localStorage.removeItem(COLLECTION_PRODUCT_IDS_CACHE);
+                return null;
+            }
+            return data.ids;
+        }
+
+        function fetchAndCacheIds() {
+            let allProducts = [];
+
+            function fetchPage(pageNo) {
+                $X.get({
+                    url: `/storefront/api/v1/collections/${collectionId}?per_page=200&page=${pageNo}`,
+                    handler: function () {
+                        const response = JSON.parse(this.responseText);
+                        const products = response?.payload?.collection?.products || [];
+                        const pagination = response?.payload?.pagination;
+
+                        allProducts = allProducts.concat(products);
+
+                        if (pagination?.has_more_page) {
+                            fetchPage(pageNo + 1);
+                        } else {
+                            const ids = allProducts
+                                .map(product => String(product.product_id || product.id))
+                                .filter(Boolean);
+                            saveProductIdsCache(ids);
+                            console.log("[ZS] Collection Product IDs Cached:", ids);
+                        }
+                    }
+                });
+            }
+
+            fetchPage(1);
+        }
+
+        const cachedIds = getCachedIds();
+        if (cachedIds) {
+            console.log("[ZS] Collection Product IDs Loaded From Cache:", cachedIds);
+        } else {
+            fetchAndCacheIds();
+        }
+        if (window.zs_view === "product") {
+
+            const cached = localStorage.getItem(COLLECTION_PRODUCT_IDS_CACHE);
+            if (!cached) {
+                console.log("[ZS] No cached collection IDs found");
+                return;
+            }
+
+            const data = JSON.parse(cached);
+            const productIds = data.ids || [];
+            const currentProductId = String(zs_product?.product_id || "");
+
+            console.log("[ZS] Current Product ID:", currentProductId);
+
+            if (productIds.includes(currentProductId)) {
+
+                const quantityContainer = document.querySelector(".theme-product-varient-quantity");
+                if (!quantityContainer) {
+                    console.log("[ZS] .theme-product-varient-quantity not found");
+                    return;
+                }
+
+                if (document.querySelector("#zs-collection-product-btn")) return;
+
+                const btn = document.createElement("button");
+                btn.id = "zs-collection-product-btn";
+                btn.type = "button";
+                btn.textContent = btnname;
+                btn.className = "btn btn-primary zs-custom-collection-btn";
+
+                btn.addEventListener("click", function () {
+                    window.location.href = rederctlinkbtn;
+                });
+
+                quantityContainer.insertAdjacentElement("afterend", btn);
+                console.log("[ZS] Button created for matching product");
+
+            } else {
+                console.log("[ZS] Product ID not found in collection cache");
+            }
+        }
+    });
+</script>
+
+
+<style>
+    #zs-collection-product-btn {
+        position: relative;
+        display: inline-block;
+        width: fit-content;
+        padding: 10px 33px;
+        background: #262627;
+        color: #ffffff;
+        border: none;
+        border-radius: 6px;
+        font-size: 15px;
+        font-weight: 500;
+        cursor: pointer;
+        overflow: hidden;
+        transition: transform 0.2s, box-shadow 0.3s;
+        box-shadow: 0 4px 24px rgb(62 62 65 / 30%);
+        z-index: 0;
+    }
+
+    #zs-collection-product-btn::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 60%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+        transform: skewX(-20deg);
+        transition: left 0.5s ease;
+        z-index: 1;
+    }
+
+    #zs-collection-product-btn:hover::before {
+        left: 160%;
+    }
+
+    #zs-collection-product-btn:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 8px 32px rgb(67 67 81 / 50%);
+    }
+
+    #zs-collection-product-btn:active {
+        transform: translateY(0);
+    }
+</style>
